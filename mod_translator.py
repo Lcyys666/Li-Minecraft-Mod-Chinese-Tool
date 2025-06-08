@@ -10,293 +10,10 @@ import math
 import time
 from pathlib import Path
 import datetime
-import threading
-import sys
-import subprocess
-try:
-    import requests
-    REQUESTS_AVAILABLE = True
-except ImportError:
-    print("警告: requests库未安装，检查更新功能将不可用。请运行 'pip install requests' 安装")
-    REQUESTS_AVAILABLE = False
 try:
     from openai import OpenAI
 except ImportError:
     print("警告: OpenAI库未安装，请运行 'pip install openai' 安装")
-
-# 版本信息
-VERSION_INFO = {
-    "version": "1.1.0",
-    "release_date": "2025-06-08",
-    "update_url": "https://gh-proxy.com/https://github.com/Lcyys666/Li-Minecraft-Mod-Chinese-Tool/raw/refs/heads/main/version.exe",
-    "changelog": "新增功能：\n- 添加已有翻译资源包过滤功能\n- 添加检查更新功能\n- 修复若干bug"
-}
-
-# 云端版本信息URL
-VERSION_CHECK_URL = "https://raw.kkgithub.com/Lcyys666/Li-Minecraft-Mod-Chinese-Tool/main/version.json"
-
-def download_file(url, save_path, progress_callback=None):
-    """下载文件到指定路径
-    
-    Args:
-        url: 文件URL
-        save_path: 保存路径
-        progress_callback: 进度回调函数，接收(current, total)参数
-        
-    Returns:
-        bool: 下载是否成功
-    """
-    if not REQUESTS_AVAILABLE:
-        print("无法下载更新：requests库未安装")
-        return False
-    
-    try:
-        # 发送流式请求
-        response = requests.get(url, stream=True, timeout=30)
-        if response.status_code != 200:
-            print(f"下载失败：HTTP错误 {response.status_code}")
-            return False
-        
-        # 获取文件大小
-        total_size = int(response.headers.get('content-length', 0))
-        
-        # 创建临时文件路径
-        temp_path = f"{save_path}.downloading"
-        
-        # 确保下载目录存在
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        
-        # 下载文件
-        downloaded = 0
-        with open(temp_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if progress_callback:
-                        progress_callback(downloaded, total_size)
-        
-        # 下载完成后重命名
-        if os.path.exists(save_path):
-            os.remove(save_path)
-        os.rename(temp_path, save_path)
-        return True
-        
-    except Exception as e:
-        print(f"下载文件时出错: {str(e)}")
-        # 清理临时文件
-        if os.path.exists(f"{save_path}.downloading"):
-            try:
-                os.remove(f"{save_path}.downloading")
-            except:
-                pass
-        return False
-
-def restart_with_new_version(new_version_path):
-    """使用新版本重启程序
-    
-    Args:
-        new_version_path: 新版本程序路径
-    """
-    try:
-        # 获取当前程序路径
-        current_path = sys.executable
-        # 如果是通过Python解释器运行的脚本
-        if os.path.basename(current_path).lower().startswith('python'):
-            current_path = os.path.abspath(__file__)
-            # 确定当前是脚本文件还是exe
-            is_script = True
-        else:
-            is_script = False
-        
-        # 如果是相同路径且都是exe或都是脚本，不需要替换
-        if os.path.abspath(new_version_path) == os.path.abspath(current_path) and os.path.splitext(new_version_path)[1] == os.path.splitext(current_path)[1]:
-            print("更新文件与当前程序相同，无需替换")
-            return
-        
-        # 获取当前程序的目录和文件名
-        current_dir = os.path.dirname(current_path)
-        current_filename = os.path.basename(current_path)
-        
-        # 创建替换批处理文件
-        bat_path = os.path.join(current_dir, "update.bat")
-        with open(bat_path, 'w', encoding='gbk') as f:
-            f.write('@echo off\n')
-            f.write('echo 正在更新，请稍候...\n')
-            f.write('timeout /t 2 /nobreak > nul\n')
-            
-            # 检查是否是通过python运行的脚本
-            if is_script:
-                # 如果是脚本文件，仅复制文件内容
-                f.write(f'copy /y "{new_version_path}" "{current_path}"\n')
-            else:
-                # 如果是exe，需要检查进程
-                f.write(f'taskkill /f /im "{current_filename}" 2>nul\n')
-                f.write('timeout /t 1 /nobreak > nul\n')
-                
-                # 直接复制到当前目录，使用原名称
-                f.write(f'copy /y "{new_version_path}" "{current_path}"\n')
-            
-            # 删除下载的更新文件
-            f.write(f'del "{new_version_path}"\n')
-            
-            # 如果是exe，启动新版本
-            if not is_script:
-                f.write(f'start "" "{current_path}"\n')
-            else:
-                # 如果是脚本，使用python启动
-                f.write(f'start "" "{sys.executable}" "{current_path}"\n')
-            
-            # 自删除批处理
-            f.write('timeout /t 1 /nobreak > nul\n')
-            f.write('del "%~f0"\n')
-        
-        print("更新文件已下载，程序将重启以完成更新...")
-        
-        # 启动批处理
-        subprocess.Popen(['cmd', '/c', 'start', '/min', bat_path], shell=True)
-        
-        # 等待一会儿后退出程序
-        time.sleep(1.5)
-        sys.exit(0)
-        
-    except Exception as e:
-        print(f"准备更新时出错: {str(e)}")
-        print("请手动更新：关闭程序后，将下载的文件复制到程序目录并重命名为当前程序名")
-
-def check_for_updates(silent=False, auto_update=False):
-    """检查是否有更新可用
-    
-    Args:
-        silent: 是否静默检查（不显示"已是最新版本"的消息）
-        auto_update: 是否自动下载更新
-        
-    Returns:
-        bool: 是否有更新可用
-    """
-    if not REQUESTS_AVAILABLE:
-        if not silent:
-            print("无法检查更新：requests库未安装")
-        return False
-    
-    try:
-        # 获取云端版本信息
-        response = requests.get(VERSION_CHECK_URL, timeout=10)
-        if response.status_code != 200:
-            if not silent:
-                print(f"检查更新失败：HTTP错误 {response.status_code}")
-            return False
-        
-        # 解析云端版本信息
-        cloud_version_info = response.json()
-        local_version = VERSION_INFO["version"]
-        cloud_version = cloud_version_info.get("version")
-        
-        if not cloud_version:
-            if not silent:
-                print("检查更新失败：无法获取云端版本号")
-            return False
-        
-        # 比较版本号
-        local_parts = [int(x) for x in local_version.split(".")]
-        cloud_parts = [int(x) for x in cloud_version.split(".")]
-        
-        # 确保两个列表长度相同
-        while len(local_parts) < len(cloud_parts):
-            local_parts.append(0)
-        while len(cloud_parts) < len(local_parts):
-            cloud_parts.append(0)
-        
-        # 比较每一部分
-        has_update = False
-        for i in range(len(local_parts)):
-            if cloud_parts[i] > local_parts[i]:
-                has_update = True
-                break
-            elif cloud_parts[i] < local_parts[i]:
-                break
-        
-        if has_update:
-            update_url = cloud_version_info.get("update_url", VERSION_INFO["update_url"])
-            
-            print("\n=== 发现新版本 ===")
-            print(f"当前版本: {local_version}")
-            print(f"最新版本: {cloud_version}")
-            print(f"发布日期: {cloud_version_info.get('release_date', '未知')}")
-            print("\n更新内容:")
-            print(cloud_version_info.get("changelog", "无更新说明"))
-            
-            if auto_update:
-                # 自动更新
-                print(f"\n正在自动下载更新...")
-                
-                # 确定下载路径 - 使用时间戳避免文件冲突
-                timestamp = int(time.time())
-                download_dir = os.path.dirname(os.path.abspath(__file__))
-                download_path = os.path.join(download_dir, f"update_{timestamp}.exe")
-                
-                # 显示下载进度的回调函数
-                def show_progress(downloaded, total):
-                    if total > 0:
-                        percent = min(100, int(downloaded * 100 / total))
-                        # 计算进度条长度
-                        bar_len = 20
-                        filled_len = int(bar_len * percent / 100)
-                        bar = '█' * filled_len + '░' * (bar_len - filled_len)
-                        # 使用\r回到行首，更新进度条
-                        sys.stdout.write(f"\r下载进度: [{bar}] {percent}% ({downloaded/1024/1024:.1f}MB/{total/1024/1024:.1f}MB)")
-                        sys.stdout.flush()
-                
-                # 下载更新
-                if download_file(update_url, download_path, show_progress):
-                    print("\n\n下载完成！正在安装更新...")
-                    restart_with_new_version(download_path)
-                else:
-                    print("\n\n下载失败，请手动更新")
-                    print(f"下载地址: {update_url}")
-            else:
-                # 询问用户是否更新
-                choice = input(f"\n是否现在下载并更新？(Y/n): ").strip().lower()
-                if choice != 'n':
-                    print(f"\n正在下载更新...")
-                    
-                    # 确定下载路径 - 使用时间戳避免文件冲突
-                    timestamp = int(time.time())
-                    download_dir = os.path.dirname(os.path.abspath(__file__))
-                    download_path = os.path.join(download_dir, f"update_{timestamp}.exe")
-                    
-                    # 显示下载进度的回调函数
-                    def show_progress(downloaded, total):
-                        if total > 0:
-                            percent = min(100, int(downloaded * 100 / total))
-                            # 计算进度条长度
-                            bar_len = 20
-                            filled_len = int(bar_len * percent / 100)
-                            bar = '█' * filled_len + '░' * (bar_len - filled_len)
-                            # 使用\r回到行首，更新进度条
-                            sys.stdout.write(f"\r下载进度: [{bar}] {percent}% ({downloaded/1024/1024:.1f}MB/{total/1024/1024:.1f}MB)")
-                            sys.stdout.flush()
-                    
-                    # 下载更新
-                    if download_file(update_url, download_path, show_progress):
-                        print("\n\n下载完成！正在安装更新...")
-                        restart_with_new_version(download_path)
-                    else:
-                        print("\n\n下载失败，请手动更新")
-                        print(f"下载地址: {update_url}")
-                else:
-                    print(f"\n下载地址: {update_url}")
-            
-            return True
-        elif not silent:
-            print(f"您使用的已经是最新版本 ({local_version})")
-        
-        return False
-    
-    except Exception as e:
-        if not silent:
-            print(f"检查更新时出错: {str(e)}")
-        return False
 
 class Config:
     """配置管理类"""
@@ -307,9 +24,7 @@ class Config:
             "api_key": "",
             "model_id": "",
             "wait_time": 3,
-            "batch_size": 40,  # 每个翻译文件的最大条目数
-            "auto_check_update": True,  # 自动检查更新
-            "auto_update": False  # 自动下载安装更新
+            "batch_size": 40  # 每个翻译文件的最大条目数
         }
         self.config = self.load_config()
     
@@ -377,15 +92,6 @@ class Config:
                 print("等待时间必须大于0")
             except ValueError:
                 print("请输入有效的数字")
-        
-        # 自动检查更新
-        auto_check = input(f"是否自动检查更新？(Y/n): ").strip().lower()
-        config['auto_check_update'] = auto_check != 'n'
-        
-        # 自动更新
-        if config['auto_check_update']:
-            auto_update = input(f"是否自动下载安装更新？(y/N): ").strip().lower()
-            config['auto_update'] = auto_update == 'y'
         
         # 保存配置
         try:
@@ -496,11 +202,8 @@ class ModTranslator:
         self.fanyi_dir = os.path.join(self.temp_dir, "fanyi")
         self.fanyi_ok_dir = os.path.join(self.temp_dir, "fanyi_ok")
         self.output_dir = os.path.join(self.temp_dir, "OUTPUT")
-        self.resourcepacks_dir = os.path.join(self.temp_dir, "resourcepacks")
         self.mod_json_path = os.path.join(self.mod_dir, "mod.json")
         self.selected_mods = []
-        self.selected_resource_packs = []
-        self.extracted_translations = {}  # 用于存储从资源包中提取的翻译
         
         # 创建隐藏的tkinter根窗口，用于文件选择对话框
         self.root = tk.Tk()
@@ -509,12 +212,6 @@ class ModTranslator:
         # 确保翻译结果目录存在
         os.makedirs(self.fanyi_ok_dir, exist_ok=True)
         os.makedirs(self.output_dir, exist_ok=True)
-        os.makedirs(self.resourcepacks_dir, exist_ok=True)
-        
-        # 如果配置允许，在后台检查更新
-        if self.config.get('auto_check_update', True) and REQUESTS_AVAILABLE:
-            auto_update = self.config.get('auto_update', False)
-            threading.Thread(target=lambda: check_for_updates(silent=True, auto_update=auto_update), daemon=True).start()
     
     def _enable_long_paths(self):
         """尝试启用Windows长路径支持"""
@@ -543,42 +240,11 @@ class ModTranslator:
     def clean_temp_folder(self):
         """清理TEMP文件夹"""
         if os.path.exists(self.temp_dir):
-            # 询问用户是否也清理资源包翻译
-            keep_resource_packs = False
-            if self.extracted_translations:
-                print("\n注意: 已有提取的资源包翻译数据")
-                choice = input("是否保留资源包翻译数据? (Y/n): ").strip().lower()
-                keep_resource_packs = choice != 'n'
-            
-            if keep_resource_packs and self.extracted_translations:
-                # 保存资源包目录内容
-                resource_packs_backup = self.extracted_translations.copy()
-                
-                # 删除TEMP目录（除了resourcepacks）
-                for item in os.listdir(self.temp_dir):
-                    item_path = os.path.join(self.temp_dir, item)
-                    if item != "resourcepacks":
-                        if os.path.isdir(item_path):
-                            shutil.rmtree(item_path)
-                        else:
-                            os.remove(item_path)
-                
-                # 恢复提取的翻译
-                self.extracted_translations = resource_packs_backup
-                print("已清理临时文件夹（保留资源包翻译数据）")
-            else:
-                # 完全清理，包括资源包
-                shutil.rmtree(self.temp_dir)
-                self.extracted_translations = {}
-                self.selected_resource_packs = []
-                print("已完全清理临时文件夹（包括资源包翻译数据）")
-        
-        # 创建必要的目录
+            shutil.rmtree(self.temp_dir)
         os.makedirs(self.mod_dir, exist_ok=True)
         os.makedirs(self.fanyi_dir, exist_ok=True)
         os.makedirs(self.fanyi_ok_dir, exist_ok=True)
         os.makedirs(self.output_dir, exist_ok=True)
-        os.makedirs(self.resourcepacks_dir, exist_ok=True)
     
     def select_mods_interactively(self):
         """使用文件选择对话框选择mod文件"""
@@ -601,105 +267,6 @@ class ModTranslator:
             print(f"  - {mod}")
         
         return len(self.selected_mods) > 0
-
-    def select_resource_packs_interactively(self):
-        """使用文件选择对话框选择翻译资源包"""
-        print("\n=== 选择翻译资源包（可选）===")
-        print("请选择已有的翻译资源包，这些资源包中的翻译内容将被用于过滤")
-        print("如果不需要使用资源包进行过滤，可以直接关闭文件选择对话框")
-        
-        files = filedialog.askopenfilenames(
-            title="选择翻译资源包（可选）",
-            filetypes=[("资源包文件", "*.zip"), ("所有文件", "*.*")]
-        )
-        
-        if not files:
-            print("未选择任何资源包，将不使用资源包过滤")
-            # 清空之前可能已有的选择
-            self.selected_resource_packs = []
-            self.extracted_translations = {}
-            return False
-        
-        # 将选择的文件添加到列表
-        self.selected_resource_packs = list(files)
-        
-        print(f"\n已选择 {len(self.selected_resource_packs)} 个翻译资源包:")
-        for pack in self.selected_resource_packs:
-            print(f"  - {pack}")
-        
-        # 解压资源包并提取翻译
-        self._extract_resource_packs()
-        
-        return len(self.selected_resource_packs) > 0
-    
-    def _extract_resource_packs(self):
-        """解压所选资源包并提取翻译文件"""
-        if not self.selected_resource_packs:
-            return
-        
-        print("\n=== 提取资源包翻译 ===")
-        
-        # 清空资源包目录
-        if os.path.exists(self.resourcepacks_dir):
-            shutil.rmtree(self.resourcepacks_dir)
-        os.makedirs(self.resourcepacks_dir, exist_ok=True)
-        
-        # 重置翻译字典
-        self.extracted_translations = {}
-        
-        # 遍历每个资源包
-        for pack_path in self.selected_resource_packs:
-            pack_name = os.path.basename(pack_path)
-            print(f"正在提取 {pack_name} 的翻译...")
-            
-            try:
-                with zipfile.ZipFile(pack_path, 'r') as zip_ref:
-                    # 查找中文语言文件
-                    for file_info in zip_ref.infolist():
-                        if '/lang/' in file_info.filename and file_info.filename.endswith('zh_cn.json'):
-                            # 提取文件
-                            relative_path = os.path.dirname(file_info.filename)
-                            extract_path = os.path.join(self.resourcepacks_dir, file_info.filename)
-                            
-                            # 确保目标目录存在
-                            os.makedirs(os.path.dirname(extract_path), exist_ok=True)
-                            
-                            # 提取文件
-                            source = zip_ref.open(file_info)
-                            with open(extract_path, 'wb') as target:
-                                shutil.copyfileobj(source, target)
-                            source.close()
-                            
-                            # 读取JSON内容
-                            try:
-                                zh_data = load_json_with_comments(extract_path)
-                                if zh_data:
-                                    # 将路径标准化以便于后续比较
-                                    normalized_path = relative_path.replace('\\', '/').rstrip('/')
-                                    
-                                    # 存储提取的翻译
-                                    if normalized_path not in self.extracted_translations:
-                                        self.extracted_translations[normalized_path] = {}
-                                    
-                                    # 合并翻译
-                                    self.extracted_translations[normalized_path].update(zh_data)
-                                    print(f"  - 已提取 {relative_path} 的翻译，包含 {len(zh_data)} 个条目")
-                            except Exception as e:
-                                print(f"  - 警告: 读取翻译文件 {file_info.filename} 时出错: {str(e)}")
-                
-                print(f"完成提取 {pack_name}")
-            
-            except Exception as e:
-                print(f"提取资源包 {pack_name} 时出错: {str(e)}")
-        
-        # 统计提取的翻译
-        total_paths = len(self.extracted_translations)
-        total_entries = sum(len(entries) for entries in self.extracted_translations.values())
-        
-        if total_paths > 0:
-            print(f"\n共从 {len(self.selected_resource_packs)} 个资源包中提取了 {total_paths} 个路径的 {total_entries} 个翻译条目")
-        else:
-            print("\n未从资源包中找到任何中文翻译文件")
     
     def process_mods(self):
         """处理所有选定的mod文件"""
@@ -707,32 +274,8 @@ class ModTranslator:
             print("错误: 没有选择mod文件")
             return False
         
-        # 清理并创建TEMP文件夹，但保留resourcepacks目录中的内容
-        if os.path.exists(self.temp_dir):
-            # 保存资源包目录内容
-            resource_packs_backup = None
-            if os.path.exists(self.resourcepacks_dir) and self.extracted_translations:
-                resource_packs_backup = self.extracted_translations.copy()
-            
-            # 删除TEMP目录（除了resourcepacks）
-            for item in os.listdir(self.temp_dir):
-                item_path = os.path.join(self.temp_dir, item)
-                if item != "resourcepacks" or not self.extracted_translations:
-                    if os.path.isdir(item_path):
-                        shutil.rmtree(item_path)
-                    else:
-                        os.remove(item_path)
-            
-            # 恢复提取的翻译
-            if resource_packs_backup:
-                self.extracted_translations = resource_packs_backup
-        
-        # 创建必要的目录
-        os.makedirs(self.mod_dir, exist_ok=True)
-        os.makedirs(self.fanyi_dir, exist_ok=True)
-        os.makedirs(self.fanyi_ok_dir, exist_ok=True)
-        os.makedirs(self.output_dir, exist_ok=True)
-        os.makedirs(self.resourcepacks_dir, exist_ok=True)
+        # 清理并创建TEMP文件夹
+        self.clean_temp_folder()
         
         mod_info = []
         stats = {
@@ -744,13 +287,7 @@ class ModTranslator:
             "no_zh_cn": 0           # 完全没有中文翻译的mod数量
         }
         
-        resource_packs_info = ""
-        if self.extracted_translations:
-            total_paths = len(self.extracted_translations)
-            total_entries = sum(len(entries) for entries in self.extracted_translations.values())
-            resource_packs_info = f"，将使用 {total_paths} 个路径的 {total_entries} 个翻译条目进行过滤"
-        
-        print(f"\n开始处理 {len(self.selected_mods)} 个mod文件{resource_packs_info}...")
+        print(f"\n开始处理 {len(self.selected_mods)} 个mod文件...")
         
         # 提取每个mod的语言文件
         for mod_path in self.selected_mods:
@@ -830,7 +367,7 @@ class ModTranslator:
                 json.dump(mod_info, f, ensure_ascii=False, indent=4)
             
             # 整理翻译文件
-            has_to_translate = self._organize_translation_files(mod_info)
+            self._organize_translation_files(mod_info)
             
             # 显示统计信息
             print("\n=== 处理统计 ===")
@@ -842,13 +379,8 @@ class ModTranslator:
             print(f"  - 无英文语言文件: {stats['no_en_us']} 个")
             print(f"  - 已有完整中文翻译: {stats['complete_zh_cn']} 个")
             print(f"\nmod信息已保存到 {self.mod_json_path}")
-            
-            if has_to_translate:
-                print(f"整理后的翻译文件已保存到 {self.fanyi_dir}")
-                return True
-            else:
-                print("\n所有内容已通过资源包翻译或mod自身翻译，无需进一步翻译")
-                return False
+            print(f"整理后的翻译文件已保存到 {self.fanyi_dir}")
+            return True
         else:
             print("\n没有找到需要处理的mod文件")
             if stats["complete_zh_cn"] > 0:
@@ -866,14 +398,9 @@ class ModTranslator:
         # 用于存储合并后的翻译内容
         merged_translations = {}
         
-        # 用于统计资源包过滤的条目
-        total_filtered = 0
-        filtered_by_mod = {}
-        
         # 遍历所有mod
         for mod in mod_info:
             mod_name = mod["name"]
-            filtered_by_mod[mod_name] = 0
             
             # 遍历mod中的语言文件
             for lang_file in mod["lang_files"]:
@@ -894,21 +421,6 @@ class ModTranslator:
                         
                         # 获取语言文件的相对路径（不包括语言代码和扩展名）
                         rel_path = os.path.dirname(lang_file["path"])
-                        normalized_path = rel_path.replace('\\', '/').rstrip('/')
-                        
-                        # 检查该路径是否在资源包翻译中存在
-                        resource_pack_translations = {}
-                        # 只有当资源包翻译不为空时才进行查找
-                        if self.extracted_translations:
-                            for rp_path, rp_data in self.extracted_translations.items():
-                                # 检查路径是否匹配或者是否包含mod ID
-                                if normalized_path.endswith(rp_path) or rp_path.endswith(normalized_path):
-                                    resource_pack_translations.update(rp_data)
-                                # 检查是否是特定mod的翻译
-                                elif '/assets/' in normalized_path:
-                                    mod_id = normalized_path.split('/assets/')[1].split('/')[0]
-                                    if f'/assets/{mod_id}/' in rp_path:
-                                        resource_pack_translations.update(rp_data)
                         
                         # 如果这个路径还没有在合并字典中，初始化它
                         if rel_path not in merged_translations:
@@ -927,97 +439,75 @@ class ModTranslator:
                         for key, value in en_data.items():
                             merged_translations[rel_path]["en_us"][key] = value
                             
-                            # 首先检查资源包中是否有这个键的翻译
-                            if key in resource_pack_translations and resource_pack_translations[key]:
-                                # 如果资源包中有翻译，使用资源包的翻译
-                                merged_translations[rel_path]["zh_cn"][key] = resource_pack_translations[key]
-                                filtered_by_mod[mod_name] += 1
-                                total_filtered += 1
-                            # 如果资源包中没有，检查mod自身的中文翻译
-                            elif key not in zh_data or not zh_data[key]:
-                                # 如果mod中也没有翻译，添加到待翻译列表
+                            # 如果这个键在中文文件中不存在，或者是空字符串，将其添加到待翻译列表
+                            if key not in zh_data or not zh_data[key]:
                                 merged_translations[rel_path]["to_translate"][key] = value
                         
-                        # 合并mod自身的中文内容
+                        # 合并中文内容
                         for key, value in zh_data.items():
-                            if value and key not in merged_translations[rel_path]["zh_cn"]:  # 只合并非空的翻译，且不覆盖资源包的翻译
+                            if value:  # 只合并非空的翻译
                                 merged_translations[rel_path]["zh_cn"][key] = value
                     
                     except Exception as e:
-                        print(f"警告: 处理 {en_path} 时出错: {str(e)}")
-        
-        # 显示过滤统计
-        if total_filtered > 0:
-            print("\n=== 资源包翻译过滤统计 ===")
-            print(f"共使用资源包中的翻译跳过了 {total_filtered} 个条目")
-            for mod_name, count in filtered_by_mod.items():
-                if count > 0:
-                    print(f"  - {mod_name}: {count} 个条目")
-        
-        # 将整理后的翻译文件写入翻译目录
-        for rel_path, content in merged_translations.items():
-            # 只有当有待翻译的内容时才创建翻译文件
-            if content["to_translate"]:
-                # 创建翻译目录
-                output_dir = os.path.join(self.fanyi_dir, rel_path)
-                os.makedirs(output_dir, exist_ok=True)
-                
-                # 将待翻译的内容分割成多个文件
-                base_filename = "to_translate"
-                split_files = split_json_file(
-                    content["to_translate"], 
-                    output_dir, 
-                    base_filename,
-                    self.config.get("batch_size", 40)
-                )
-                
-                if split_files:
-                    print(f"已创建翻译文件: {rel_path} ({len(content['to_translate'])} 个条目，分成 {len(split_files)} 个文件)")
+                        print(f"警告: 处理文件 {en_path} 时出错: {str(e)}")
         
         # 创建索引文件
-        index = {"paths": []}
-        for rel_path, content in merged_translations.items():
-            if content["to_translate"]:  # 只包含有待翻译内容的路径
-                # 获取该路径下的所有分割文件
-                path_dir = os.path.join(self.fanyi_dir, rel_path)
-                split_files = []
-                if os.path.exists(path_dir):
-                    for f in os.listdir(path_dir):
-                        if f.startswith("to_translate") and f.endswith(".json"):
-                            split_files.append(f)
+        index = {
+            "total_paths": len(merged_translations),
+            "paths": []
+        }
+        
+        # 将合并后的翻译内容写入文件，保持原始路径结构
+        for rel_path, data in merged_translations.items():
+            # 确保rel_path是正确的格式(assets/xxx/lang)
+            if not rel_path.startswith('assets/'):
+                print(f"警告: 忽略非标准路径 {rel_path}")
+                continue
                 
-                if split_files:
-                    index["paths"].append({
-                        "path": rel_path,
-                        "mods": content["mods"],
-                        "split_files": sorted(split_files)
-                    })
+            # 创建目标文件夹
+            target_dir = os.path.join(self.fanyi_dir, rel_path)
+            os.makedirs(target_dir, exist_ok=True)
+            
+            # 写入待翻译文件，如果内容较多则分割成多个文件
+            split_files = []
+            if data["to_translate"]:
+                # 计算待翻译内容的数量
+                to_translate_count = len(data["to_translate"])
+                
+                if to_translate_count > 40:
+                    # 如果待翻译内容超过40项，分割成多个文件
+                    print(f"路径 {rel_path} 的待翻译内容较多 ({to_translate_count} 项)，分割成多个文件")
+                    split_files = split_json_file(
+                        data["to_translate"], 
+                        target_dir, 
+                        "fanyi", 
+                        items_per_file=40
+                    )
+                    # 记录分割文件的相对路径
+                    split_files = [os.path.basename(f) for f in split_files]
+                else:
+                    # 如果待翻译内容不多，只创建一个文件
+                    fanyi_path = os.path.join(target_dir, "fanyi.json")
+                    with open(fanyi_path, 'w', encoding='utf-8') as f:
+                        json.dump(data["to_translate"], f, ensure_ascii=False, indent=4)
+                    split_files = ["fanyi.json"]
+            
+            # 记录路径信息
+            path_info = {
+                "path": rel_path,
+                "mods": data["mods"],
+                "total_keys": len(data["en_us"]),
+                "translated_keys": len(data["zh_cn"]),
+                "to_translate_keys": len(data["to_translate"]),
+                "split_files": split_files
+            }
+            index["paths"].append(path_info)
         
         # 写入索引文件
-        index_path = os.path.join(self.fanyi_dir, "index.json")
-        with open(index_path, 'w', encoding='utf-8') as f:
+        with open(os.path.join(self.fanyi_dir, "index.json"), 'w', encoding='utf-8') as f:
             json.dump(index, f, ensure_ascii=False, indent=4)
         
-        # 保存合并的英文和已有中文翻译，用于后续合并
-        for rel_path, content in merged_translations.items():
-            # 创建输出目录
-            output_dir = os.path.join(self.fanyi_dir, rel_path)
-            os.makedirs(output_dir, exist_ok=True)
-            
-            # 保存英文原文
-            en_path = os.path.join(output_dir, "en_us.json")
-            with open(en_path, 'w', encoding='utf-8') as f:
-                json.dump(content["en_us"], f, ensure_ascii=False, indent=4)
-            
-            # 保存已有的中文翻译
-            if content["zh_cn"]:
-                zh_path = os.path.join(output_dir, "zh_cn.json")
-                with open(zh_path, 'w', encoding='utf-8') as f:
-                    json.dump(content["zh_cn"], f, ensure_ascii=False, indent=4)
-        
-        # 返回是否有需要翻译的内容
-        has_to_translate = any(len(content["to_translate"]) > 0 for content in merged_translations.values())
-        return has_to_translate
+        print(f"整理完成，共处理 {len(merged_translations)} 个翻译路径")
     
     def _should_check_translation_completeness(self):
         """是否检查翻译完整性（可以根据需要修改）"""
@@ -1590,18 +1080,15 @@ def main_menu():
     while True:
         try:
             print("\n=== Minecraft Mod 汉化工具 ===")
-            print(f"版本: {VERSION_INFO['version']} ({VERSION_INFO['release_date']})")
             print("1. 选择mod文件")
-            print("2. 选择已有翻译资源包（可选）")
-            print("3. 处理已选择的mod文件")
-            print("4. 使用AI翻译")
-            print("5. 合并翻译结果")
-            print("6. 清理临时文件夹")
-            print("7. 修改配置")
-            print("8. 检查更新")
+            print("2. 处理已选择的mod文件")
+            print("3. 使用AI翻译")
+            print("4. 合并翻译结果")
+            print("5. 清理临时文件夹")
+            print("6. 修改配置")
             print("0. 退出程序")
             
-            choice = input("\n请选择操作 [0-8]: ").strip()
+            choice = input("\n请选择操作 [0-6]: ").strip()
             
             if choice == '0':
                 print("正在退出程序...")
@@ -1609,27 +1096,20 @@ def main_menu():
             elif choice == '1':
                 translator.select_mods_interactively()
             elif choice == '2':
-                translator.select_resource_packs_interactively()
-            elif choice == '3':
                 if not translator.selected_mods:
                     print("请先选择mod文件")
                     continue
                 translator.process_mods()
-            elif choice == '4':
+            elif choice == '3':
                 translator.translate_with_ai()
-            elif choice == '5':
+            elif choice == '4':
                 translator.merge_translations()
-            elif choice == '6':
+            elif choice == '5':
                 translator.clean_temp_folder()
                 print("已清理临时文件夹")
-            elif choice == '7':
+            elif choice == '6':
                 # 重新创建配置
                 translator.config.create_new_config()
-            elif choice == '8':
-                # 检查更新
-                print("\n=== 检查更新 ===")
-                auto_update = translator.config.get('auto_update', False)
-                check_for_updates(auto_update=auto_update)
             else:
                 print("无效的选择，请重试")
         except KeyboardInterrupt:
@@ -1641,22 +1121,6 @@ def main_menu():
 
 if __name__ == "__main__":
     print("欢迎使用 Minecraft Mod 汉化工具")
-    print(f"版本: {VERSION_INFO['version']} ({VERSION_INFO['release_date']})")
-    
-    # 如果配置允许，在启动时检查更新
-    if REQUESTS_AVAILABLE:
-        # 尝试加载配置以获取auto_update设置
-        try:
-            config = Config()
-            auto_update = config.get('auto_update', False)
-            print("正在检查更新...")
-            check_for_updates(auto_update=auto_update)
-        except Exception as e:
-            print(f"检查更新时出错: {str(e)}")
-            # 如果配置加载失败，仍然检查更新但不自动更新
-            print("正在检查更新...")
-            check_for_updates()
-    
     try:
         main_menu()
     except Exception as e:
